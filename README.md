@@ -189,6 +189,24 @@ Se incluyen diez pruebas automatizadas, con los siete escenarios mínimos de la 
 La última ejecución local obtuvo: **10 pruebas, 0 fallos, 0 errores, 0 omitidas**. El resumen está
 en [`evidencias/resultado-pruebas.txt`](evidencias/resultado-pruebas.txt).
 
+## Evidencia de ejecución de la aplicación
+
+Además de las pruebas JUnit, `SipapEvidenceApplication` inicia un `CamelContext` real, envía las
+cadenas por `direct:sipap-in` y muestra el resultado devuelto por el flujo completo.
+
+```bash
+mvn exec:java -Dexec.mainClass=py.edu.ucom.sipap.SipapEvidenceApplication -Dexec.args=valid
+mvn exec:java -Dexec.mainClass=py.edu.ucom.sipap.SipapEvidenceApplication -Dexec.args=invalid
+```
+
+### Transferencias válidas
+
+![Ejecución real de ITAU, ATLAS y FAMILIAR](evidencias/01-ejecucion-validas.png)
+
+### Transferencias inválidas
+
+![Ejecución real de los cinco escenarios rechazados](evidencias/02-ejecucion-invalidas.png)
+
 ## Ejemplos
 
 Las cadenas listas para copiar están en [`examples/cadenas-qr.txt`](examples/cadenas-qr.txt).

@@ -20,3 +20,17 @@ Escenarios comprobados:
 - Checksum diferente de A1B2.
 - Longitud TLV incorrecta.
 - Conversión de errores a ResultadoTransferencia RECHAZADA.
+
+Evidencia de ejecución manual de la aplicación
+===============================================
+
+Ejecutor: py.edu.ucom.sipap.SipapEvidenceWindow
+
+- 01-ejecucion-validas.png: ejecución real de ITAU, ATLAS y FAMILIAR.
+  Resultado: 3 procesadas, 0 rechazadas, 3 ejecutadas.
+- 02-ejecucion-invalidas.png: ejecución real de banco desconocido, campo
+  obligatorio ausente, monto igual a 10.000.000, CRC inválido y TLV truncado.
+  Resultado: 0 procesadas, 5 rechazadas, 5 ejecutadas.
+
+Ambas capturas muestran la cadena QR de entrada y el ResultadoTransferencia
+común emitido por el flujo Camel.
