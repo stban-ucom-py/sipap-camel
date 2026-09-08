@@ -1,93 +1,101 @@
-# Integración de transferencias SIPAP mediante QR con Apache Camel
+# Tarea 1 - Integración SIPAP con Apache Camel
 
-Proyecto académico que simula la recepción, interpretación, validación, transformación y
-enrutamiento de transferencias SIP entre ITAU, ATLAS y FAMILIAR. Toda la comunicación ocurre
-dentro de un único `CamelContext` mediante endpoints `direct:`; no utiliza ActiveMQ, Artemis ni
-otro broker.
+**Alumno:** Esteban Gavilan
+**Tema:** Transferencias QR SIPAP usando Apache Camel
 
-> **Alcance didáctico:** las cadenas, los códigos de entidad y el checksum `A1B2` siguen la
-> consigna académica. No representan un QR oficial y no deben utilizarse para operaciones reales.
+## Descripción
+
+En esta tarea hice una simulación de transferencias entre bancos usando Apache Camel. La idea es que un productor genera una cadena QR en formato TLV, Camel la recibe, la valida, la transforma a un modelo JSON y la manda al banco correspondiente.
+
+Los bancos simulados son:
+
+- ITAU (`0015`)
+- ATLAS (`0007`)
+- FAMILIAR (`0020`)
+
+Todo se comunica dentro del mismo proceso con endpoints `direct:`. No se usó ActiveMQ, Artemis ni ningún otro broker.
+
+> El QR y el checksum `A1B2` son solamente para esta práctica. No deben usarse en transferencias reales.
 
 ## Requisitos
 
-- Java 17 o 21.
+- Java 17 o superior.
 - Maven 3.9 o superior.
-- Conexión a internet únicamente en la primera compilación, para descargar dependencias.
 
-El proyecto usa Apache Camel **4.18.4 LTS**. Esta línea es compatible con Java 17 y 21 y fue
-publicada como versión LTS por el proyecto Apache Camel.[^1]
+## Cómo ejecutar
 
-## Ejecución
+Primero se compila y se ejecutan las pruebas:
 
 ```bash
 mvn clean test
+```
+
+Para levantar la aplicación principal:
+
+```bash
 mvn exec:java
 ```
 
-La aplicación levanta tres productores `timer:`. Cada uno genera una transferencia educativa y
-la envía a `direct:sipap-in`. Se verán en consola el QR recibido, el modelo canónico y el resultado
-común producido por el banco. La aplicación permanece activa hasta presionar `Ctrl+C`.
-
-## Flujo de integración
-
-```mermaid
-flowchart LR
-    P1["timer: productor ITAU"] --> IN["direct:sipap-in"]
-    P2["timer: productor ATLAS"] --> IN
-    P3["timer: productor FAMILIAR"] --> IN
-    IN -. "Wire Tap" .-> AUD["direct:audit"]
-    IN --> PARSE["direct:parse\nTLV → Transferencia"]
-    PARSE --> VAL["direct:validate"]
-    PARSE -. "excepción" .-> DLQ["direct:dead-letter"]
-    VAL --> FILT{"Message Filter\n¿válida?"}
-    FILT -- "no" --> REJ["direct:rejected\nResultado RECHAZADA"]
-    FILT -- "sí" --> CBR{"choice()\ncodigo_entidad"}
-    CBR -- "0015" --> ITAU["direct:itau"]
-    CBR -- "0007" --> ATLAS["direct:atlas"]
-    CBR -- "0020" --> FAM["direct:familiar"]
-    ITAU --> OK["Resultado PROCESADA"]
-    ATLAS --> OK
-    FAM --> OK
-```
-
-`direct:` invoca otro endpoint del mismo `CamelContext` de forma directa y síncrona, por lo que
-encaja con la restricción de la consigna, aunque no ofrece persistencia ni distribución.[^2]
+La aplicación genera transferencias para ITAU, ATLAS y FAMILIAR mediante productores `timer:`.
 
 ## Estructura del proyecto
 
 ```text
 src/main/java/py/edu/ucom/sipap/
-├── SipapApplication.java             arranque de Camel Main
-├── domain/                           modelo canónico y resultado común
-├── processor/                        correlación, consumidores y rechazos
-├── routes/SipapRoutes.java           rutas y patrones EIP en Java DSL
-├── samples/QrSamples.java            productores de cadenas correctas/incorrectas
-├── tlv/                              codec TLV y traductor QR
-└── validation/                       reglas funcionales
-src/test/java/py/edu/ucom/sipap/      pruebas unitarias y de integración
+├── SipapApplication.java       inicio de la aplicación
+├── routes/                     rutas de Apache Camel
+├── tlv/                        parser y codec TLV
+├── domain/                     clases del modelo canónico
+├── validation/                 validaciones de la transferencia
+├── processor/                  consumidores, rechazos y correlación
+└── samples/                    ejemplos de QR
+
+src/test/java/                  pruebas automatizadas
+examples/                       QR válidos e inválidos
+evidencias/                     capturas y resultado de pruebas
+docs/                           diagrama del flujo
 ```
 
-## Procesamiento TLV
+## Flujo realizado
 
-`TlvCodec` avanza por la cadena leyendo bloques de cuatro caracteres (`TAG` + `LONGITUD`) y luego
-consume exactamente la cantidad declarada. Rechaza cabeceras incompletas, longitudes no numéricas,
-valores truncados y tags duplicados. El bloque 32 se vuelve a decodificar para obtener sus sub-tags:
+```mermaid
+flowchart LR
+    P["Productores timer:"] --> I["direct:sipap-in"]
+    I -. "Wire Tap" .-> A["direct:audit"]
+    I --> T["direct:parse\nTLV a Transferencia"]
+    T --> V["direct:validate"]
+    T -. "error" .-> D["direct:dead-letter"]
+    V --> F{"¿Es válida?"}
+    F -- "No" --> R["direct:rejected"]
+    F -- "Sí" --> C{"Banco destino"}
+    C -- "0015" --> ITAU["direct:itau"]
+    C -- "0007" --> ATLAS["direct:atlas"]
+    C -- "0020" --> FAM["direct:familiar"]
+```
 
-- `00`: `py.gov.bcp.sip`;
-- `01`: código de la entidad de destino;
-- `02`: número de cuenta.
+## Formato del QR
 
-Las longitudes se generan automáticamente. Por ejemplo, `TIENDA EJEMPLO` tiene 14 caracteres y se
-codifica como `5914TIENDA EJEMPLO`. El valor interno completo del tag 32 ocupa 40 caracteres al
-contar también las cabeceras de sus tres sub-tags, por eso comienza con `3240`.
+La cadena usa el formato `TAG + LONGITUD + VALOR`.
 
-EMVCo define un formato estandarizado e interoperable para comunicar datos de pago mediante QR;
-este proyecto implementa solamente el subconjunto TLV simplificado exigido por la consigna.[^3]
+Ejemplo de una transferencia válida para ITAU:
+
+```text
+00020101021232400014py.gov.bcp.sip01040015021012345678905204573153036005405150005802PY5914TIENDA EJEMPLO6008ASUNCION6304A1B2
+```
+
+El tag `32` contiene la información de cuenta:
+
+| Sub-tag | Contenido |
+|---|---|
+| `00` | `py.gov.bcp.sip` |
+| `01` | Código del banco |
+| `02` | Número de cuenta |
+
+Todos los ejemplos válidos e inválidos están en [examples/cadenas-qr.txt](examples/cadenas-qr.txt).
 
 ## Modelo canónico
 
-Los consumidores nunca reciben la cadena original. Reciben una instancia de `Transferencia`, que
-Jackson representa así:
+Después de leer el QR, los consumidores reciben este JSON y no la cadena TLV original:
 
 ```json
 {
@@ -98,133 +106,90 @@ Jackson representa así:
     "codigo_entidad": "0015",
     "numero_cuenta": "1234567890"
   },
-  "merchant_category_code": "5731",
   "transaction_currency": "600",
   "transaction_amount": 15000,
-  "country_code": "PY",
   "merchant_name": "TIENDA EJEMPLO",
-  "merchant_city": "ASUNCION",
   "crc": "A1B2"
 }
 ```
 
-## Validaciones
+## Validaciones implementadas
 
-La transferencia solo llega a un consumidor si cumple todas estas reglas:
+Se valida que:
 
-1. Payload Format Indicator igual a `01`.
-2. Point of Initiation Method igual a `11` o `12`.
-3. Sub-tags `00`, `01` y `02` presentes en Merchant Account Information.
-4. Identificador global igual a `py.gov.bcp.sip`.
-5. Banco reconocido: `0015`, `0007` o `0020`.
-6. Campos obligatorios del comercio presentes.
-7. Moneda igual a `600` (PYG).
-8. Monto positivo para QR dinámico.
-9. Monto menor a G. 10.000.000, conforme al escenario de rechazo de la consigna.
-10. Checksum didáctico igual a `A1B2`.
+- La estructura TLV y sus longitudes sean correctas.
+- Estén presentes los campos obligatorios.
+- El identificador sea `py.gov.bcp.sip`.
+- El banco exista dentro de los bancos simulados.
+- La moneda sea `600` (PYG).
+- Un QR dinámico tenga un monto positivo.
+- El monto sea menor a G. 10.000.000, como pide la consigna.
+- El checksum sea `A1B2`.
 
-El límite real comunicado por el BCP en 2026 permite operaciones **hasta** G. 10 millones.[^4]
-Esta implementación rechaza montos **mayores o iguales** a ese valor porque así lo exige
-explícitamente el escenario académico; no intenta reproducir las reglas productivas del SIP.
+Si algo falla, el mensaje no llega al banco y se devuelve un resultado con estado `RECHAZADA`.
 
-## Patrones EIP aplicados
+## Patrones EIP usados
 
-| Patrón | Evidencia en el proyecto |
+| Patrón | Cómo lo usé |
 |---|---|
-| Message Channel | `direct:sipap-in`, `direct:parse`, `direct:validate`, `direct:itau`, `direct:atlas`, `direct:familiar` |
-| Pipes and Filters | Rutas separadas para recepción, parsing, traducción, validación, filtrado y consumo |
-| Message Translator | `QrParser` convierte TLV a `Transferencia`; `marshal/unmarshal` evidencia el JSON canónico |
-| Content-Based Router | `choice()` selecciona el consumidor según `SipapBankCode` |
-| Message Filter | Dos `filter()` separan transferencias válidas y rechazadas antes de los bancos |
-| Correlation Identifier | Cabecera `SipapTransactionId`, conservada de extremo a extremo |
-| Dead Letter Channel | Errores de parsing terminan en `direct:dead-letter` como resultado `RECHAZADA` |
-| Wire Tap | Copia de auditoría hacia `direct:audit` sin alterar el mensaje principal |
-
-Camel implementa estos patrones como procesadores componibles; su catálogo oficial incluye
-Content-Based Router, Filter, Splitter, Aggregator y otros patrones de integración.[^5] El Filter
-EIP deja continuar únicamente los mensajes cuyo predicado se evalúa como verdadero,[^6] mientras
-que Dead Letter Channel mueve fallos agotados a un endpoint dedicado.[^7]
-
-## Resultados comunes
-
-Procesada:
-
-```json
-{
-  "id_transaccion": "TX000001",
-  "estado": "PROCESADA",
-  "mensaje": "Transferencia procesada exitosamente por ITAU"
-}
-```
-
-Rechazada:
-
-```json
-{
-  "id_transaccion": "TX000002",
-  "estado": "RECHAZADA",
-  "mensaje": "Checksum inválido: se esperaba A1B2"
-}
-```
+| Message Channel | Los canales `direct:sipap-in`, `direct:itau`, `direct:atlas` y `direct:familiar`. |
+| Pipes and Filters | Separé el flujo en recepción, parseo, validación y procesamiento. |
+| Message Translator | `QrParser` transforma el QR TLV al objeto `Transferencia`. |
+| Content-Based Router | `choice()` elige el banco según el código de entidad. |
+| Message Filter | Los QR inválidos se rechazan antes de llegar a un banco. |
+| Correlation Identifier | Se conserva el id de transacción en `SipapTransactionId`. |
+| Dead Letter Channel | Captura errores de parsing y los convierte en un rechazo. |
+| Wire Tap | Guarda una copia de auditoría sin cambiar el flujo principal. |
 
 ## Pruebas
+
+Para ejecutar las pruebas:
 
 ```bash
 mvn test
 ```
 
-Se incluyen diez pruebas automatizadas, con los siete escenarios mínimos de la consigna:
+Se probaron estos casos:
 
-- ITAU válida;
-- ATLAS válida;
-- FAMILIAR válida;
-- banco desconocido;
-- campo obligatorio ausente;
-- monto igual a G. 10.000.000;
-- checksum incorrecto;
-- TLV cuya longitud declarada supera los caracteres disponibles;
-- codificación y decodificación correcta de longitudes;
-- conversión de un TLV malformado al resultado común mediante Dead Letter Channel.
+1. Transferencia válida a ITAU.
+2. Transferencia válida a ATLAS.
+3. Transferencia válida a FAMILIAR.
+4. Banco desconocido.
+5. Campo obligatorio ausente.
+6. Monto igual a G. 10.000.000.
+7. Checksum incorrecto.
+8. Longitud TLV incorrecta.
 
-La última ejecución local obtuvo: **10 pruebas, 0 fallos, 0 errores, 0 omitidas**. El resumen está
-en [`evidencias/resultado-pruebas.txt`](evidencias/resultado-pruebas.txt).
+Resultado de las pruebas: **10 pruebas ejecutadas, 0 fallos y 0 errores**.
 
-## Evidencia de ejecución de la aplicación
+El detalle está en [evidencias/resultado-pruebas.txt](evidencias/resultado-pruebas.txt).
 
-Además de las pruebas JUnit, `SipapEvidenceApplication` inicia un `CamelContext` real, envía las
-cadenas por `direct:sipap-in` y muestra el resultado devuelto por el flujo completo.
+## Evidencias de ejecución
+
+Además de las pruebas, se ejecutó la aplicación con dos grupos de escenarios.
+
+Para generar las mismas pantallas:
 
 ```bash
-mvn exec:java -Dexec.mainClass=py.edu.ucom.sipap.SipapEvidenceApplication -Dexec.args=valid
-mvn exec:java -Dexec.mainClass=py.edu.ucom.sipap.SipapEvidenceApplication -Dexec.args=invalid
+mvn exec:java -Dexec.mainClass=py.edu.ucom.sipap.SipapEvidenceWindow -Dexec.args=valid
+mvn exec:java -Dexec.mainClass=py.edu.ucom.sipap.SipapEvidenceWindow -Dexec.args=invalid
 ```
 
-### Transferencias válidas
+### Casos válidos
 
-![Ejecución real de ITAU, ATLAS y FAMILIAR](evidencias/01-ejecucion-validas.png)
+Se procesaron correctamente una transferencia para ITAU, una para ATLAS y una para FAMILIAR.
 
-### Transferencias inválidas
+![Ejecución válida](evidencias/01-ejecucion-validas.png)
 
-![Ejecución real de los cinco escenarios rechazados](evidencias/02-ejecucion-invalidas.png)
+### Casos inválidos
 
-## Ejemplos
+Se rechazaron un banco desconocido, un campo obligatorio ausente, un monto límite, un CRC inválido y una cadena TLV incorrecta.
 
-Las cadenas listas para copiar están en [`examples/cadenas-qr.txt`](examples/cadenas-qr.txt).
-También se generan programáticamente con `QrSamples`, evitando errores manuales de longitud.
+![Ejecución inválida](evidencias/02-ejecucion-invalidas.png)
 
-## Evolución posible
+## Referencias consultadas
 
-La lógica de TLV, validación y dominio no depende del transporte. En una segunda etapa, los
-endpoints `direct:` podrían sustituirse por colas, manteniendo los procesadores. Esa evolución
-añadiría persistencia, asincronía y garantías de entrega, pero está deliberadamente fuera del
-alcance actual.
-
-## Referencias
-
-[^1]: Apache Camel, [Releases 4.18.x](https://camel.apache.org/releases/) y [descargas/versiones compatibles de Java](https://camel.apache.org/download/).
-[^2]: Apache Camel, [Direct Component](https://camel.apache.org/components/4.18.x/direct-component.html).
-[^3]: EMVCo, [EMV QR Codes](https://www.emvco.com/emv-technologies/qr-codes/).
-[^4]: Banco Central del Paraguay, [actualización del límite del SPI a G. 10 millones](https://www.bcp.gov.py/es/web/institucional/w/bcp-actualiza-el-reglamento-del-sipap-y-eleva-el-limite-de-las-transferencias-instantaneas-a-g-10-millones).
-[^5]: Apache Camel, [Enterprise Integration Patterns](https://camel.apache.org/components/4.18.x/eips/enterprise-integration-patterns.html).
-[^6]: Apache Camel, [Filter EIP](https://camel.apache.org/components/4.18.x/eips/filter-eip.html).
-[^7]: Apache Camel, [Dead Letter Channel](https://camel.apache.org/components/4.18.x/eips/dead-letter-channel.html).
+- [Apache Camel - Direct Component](https://camel.apache.org/components/4.18.x/direct-component.html)
+- [Apache Camel - Enterprise Integration Patterns](https://camel.apache.org/components/4.18.x/eips/enterprise-integration-patterns.html)
+- [Apache Camel - Testing](https://camel.apache.org/components/4.18.x/others/test.html)
+- [EMVCo QR Codes](https://www.emvco.com/emv-technologies/qr-codes/)
